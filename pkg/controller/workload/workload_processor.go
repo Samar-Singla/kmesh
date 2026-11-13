@@ -817,6 +817,22 @@ func (p *Processor) updateServiceMap(service, oldService *workloadapi.Service) e
 			}
 		}
 
+		// Locality modes share endpoint groups, but changing the routing scopes
+		// changes the meaning of those groups even when the mode stays the same.
+		if newServiceInfo.LbPolicy != uint32(workloadapi.LoadBalancing_UNSPECIFIED_MODE) &&
+			!slices.Equal(oldService.GetLoadBalancing().GetRoutingPreference(), lb.GetRoutingPreference()) {
+			if err = p.updateEndpointPriority(sk.ServiceId, true); err != nil {
+				return fmt.Errorf("update endpoint priority failed: %v", err)
+			}
+			// Moving endpoints updates the counts in the service map. Keep those
+			// counts while applying the rest of this service update below.
+			updatedServiceInfo := bpf.ServiceValue{}
+			if err = p.bpf.ServiceLookup(&sk, &updatedServiceInfo); err != nil {
+				return fmt.Errorf("service map lookup %v failed: %v", sk.ServiceId, err)
+			}
+			newServiceInfo.EndpointCount = updatedServiceInfo.EndpointCount
+		}
+
 		// Compare the addresses of the old and new maps to avoid residual.
 		// If the data can be found in the km_service map, it is also stored in the serviceCache.
 		newServiceAddress := service.GetIpAddresses()
